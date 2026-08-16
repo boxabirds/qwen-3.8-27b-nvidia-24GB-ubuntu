@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Meteor Rush — 3D</title>
+<style>
+  :root{
+    --neon:#3ef0ff;
+    --warn:#ff5470;
+    --bg:#02030a;
+  }
+  *{ margin:0; padding:0; box-sizing:border-box; }
+  html,body{
+    width:100%; height:100%;
+    background:var(--bg);
+    overflow:hidden;
+    font-family:"Courier New", ui-monospace, SFMono-Regular, Menlo, monospace;
+    color:#cfd8ff;
+    -webkit-user-select:none; user-select:none;
+  }
+  #game{
+    position:fixed; inset:0;
+    display:block; width:100%; height:100%;
+    cursor:crosshair;
+  }
+  .hidden{ display:none !important; }
+
+  .overlay{
+    position:fixed; inset:0; z-index:10;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    text-align:center;
+    background:radial-gradient(circle at 50% 38%, rgba(18,28,58,.55), rgba(2,3,10,.92));
+    -webkit-backdrop-filter:blur(2px); backdrop-filter:blur(2px);
+  }
+  h1{
+    font-size:clamp(42px,8vw,92px);
+    letter-spacing:.16em;
+    background:linear-gradient(180deg,#eaf6ff 0%, #3ef0ff 55%, #1b6dff 100%);
+    -webkit-background-clip:text; background-clip:text;
+    color:transparent;
+    text-shadow:0 0 34px rgba(62,240,255,.35);
+    margin-bottom:6px;
+    font-weight:700;
+  }
+  .sub{ color:#8fa3d8; letter-spacing:.34em; font-size:14px; margin-bottom:26px; }
+  .btn{
+    font-family:inherit; font-size:18px; letter-spacing:.22em; font-weight:700;
+    color:#02030a; background:var(--neon);
+    border:none; padding:14px 38px; border-radius:5px; cursor:pointer;
+    box-shadow:0 0 26px rgba(62,240,255,.55);
+    transition:transform .09s ease, box-shadow .18s ease;
+  }
+  .btn:hover{ transform:scale(1.05); box-shadow:0 0 40px rgba(62,240,255,.9); }
+  .btn:active{ transform:scale(.98); }
+  .help{ margin-top:34px; color:#6f82b8; font-size:13px; line-height:2.1; letter-spacing:.08em; }
+  .help b{ color:#bfe9ff; letter-spacing:.14em; }
+
+  #hud{
+    position:fixed; top:0; left:0; right:0; z-index:5;
+    display:flex; justify-content:space-between; align-items:flex-start;
+    padding:16px 24px; pointer-events:none;
+    text-shadow:0 0 10px rgba(62,240,255,.45);
+  }
+  .box{ display:flex; flex-direction:column; gap:3px; }
+  .label{ font-size:10px; color:#5f74a6; letter-spacing:.3em; }
+  .value{ font-size:23px; color:#eaf6ff; letter-spacing:.06em; }
+  #lives{ color:#ff6b8b; }
+  #speed{ color:var(--neon); }
+
+  #msg{
+    position:fixed; bottom:16px; left:0; right:0; z-index:5;
+    text-align:center; color:#42527f; font-size:12px; letter-spacing:.2em;
+    pointer-events:none;
+  }
+  #flash{
+    position:fixed; inset:0; z-index:8; pointer-events:none;
+    background:radial-gradient(circle at 50% 50%, rgba(255,43,78,.55), rgba(255,43,78,.15));
+    opacity:0;
+  }
+  .badge{ margin-top:14px; color:#3ef0ff; letter-spacing:.28em; font-size:12px; opacity:.85; }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<div id="hud" class="hidden">
+  <div class="box">
+    <span class="label">SCORE</span>
+    <span class="value" id="score">0</span>
+  </div>
+  <div class="box" style="text-align:center">
+    <span class="label">SPEED</span>
+    <span class="value" id="speed">1.0x</span>
+  </div>
+  <div class="box" style="text-align:right">
+    <span class="label">HULL</span>
+    <span class="value" id="lives">&#9829;&#9829;&#9829;</span>
+  </div>
+</div>
+
+<div id="msg" class="hidden">WASD / ARROWS MOVE &middot; SPACE SHOOT &middot; P PAUSE &middot; M SOUND</div>
+<div id="flash"></div>
+
+<div id="menu" class="overlay">
+  <h1>METEOR RUSH</h1>
+  <div class="sub">A 3D SPACE SURVIVAL</div>
+  <button class="btn" id="startBtn">LAUNCH</button>
+  <div class="badge hidden" id="menuBest">BEST 0</div>
+  <div class="help">
+    <b>MOVE</b> &mdash; WASD / ARROW KEYS<br>
+    <b>SHOOT</b> &mdash; SPACE (HOLD)<br>
+    <b>PAUSE</b> &mdash; P &nbsp;&middot;&nbsp; <b>SOUND</b> &mdash; M<br>
+    Dodge the rocks. Break the big ones. Don&rsquo;t get hit.
+  </div>
+</div>
+
+<div id="pause" class="overlay hidden">
+  <h1 style="font-size:clamp(30px,5vw,54px)">PAUSED</h1>
+  <div class="sub">PRESS P TO RESUME</div>
+</div>
+
+<div id="over" class="overlay hidden">
+  <h1 style="font-size:clamp(34px,6vw,68px);background:linear-gradient(180deg,#ffd7e0,#ff5470 55%,#a3123a);-webkit-background-clip:text;background-clip:text;">SHIP LOST</h1>
+  <div class="sub" id="finalScore">SCORE 0</div>
+  <div class="sub" id="bestScore" style="color:#3ef0ff">BEST 0</div>
+  <button class="btn" id="retryBtn">RETRY</button>
+  <div class="help">PRESS ENTER TO RELAUNCH</div>
+</div>
+
+<script src="game.js"></script>
+</body>
+</html>

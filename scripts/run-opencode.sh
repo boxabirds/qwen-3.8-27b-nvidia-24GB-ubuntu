@@ -20,7 +20,15 @@
 #   scripts/run-opencode.sh --server-only   start server + watcher, no client
 #   scripts/run-opencode.sh -- <args...>    pass args through to opencode
 #
+#   THINKING=0 scripts/run-opencode.sh      disable reasoning (faster, terser)
+#   PROFILE=vision scripts/run-opencode.sh  enable image input
+#
 # Env: PORT PROFILE IDLE_TIMEOUT MODEL_ID PROVIDER
+#      plus anything qwen38-27b-server understands -- CTX, KV_TYPE, VISION,
+#      THINKING, THINKING_BUDGET, NP, UB -- which is passed straight through.
+#      NOTE: these only apply when a server is actually started. If one is
+#      already running it is reused as-is, and the script warns if your
+#      requested settings differ from the running server's.
 
 set -euo pipefail
 
@@ -40,6 +48,7 @@ WATCHER_PID_FILE="$STATE_DIR/watcher.pid"
 LOCK_FILE="$STATE_DIR/lock"
 LOG_FILE="$STATE_DIR/run-opencode.log"
 SERVER_LOG="$STATE_DIR/server.log"
+CONFIG_FILE="$STATE_DIR/server.config"
 OC_CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/opencode/opencode.json"
 
 mkdir -p "$CLIENTS_DIR"
@@ -51,6 +60,15 @@ say() { printf '%s\n' "$*" >&2; }
 now() { date +%s; }
 
 server_healthy() { curl -sf --max-time 3 "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1; }
+
+# Settings that change how the server behaves. Recorded at launch so a later
+# invocation asking for something different is told rather than silently
+# handed a server configured the old way.
+server_config_sig() {
+  printf 'PROFILE=%s CTX=%s KV_TYPE=%s VISION=%s THINKING=%s THINKING_BUDGET=%s NP=%s UB=%s' \
+    "$PROFILE" "${CTX:-default}" "${KV_TYPE:-default}" "${VISION:-default}" \
+    "${THINKING:-1}" "${THINKING_BUDGET:-none}" "${NP:-default}" "${UB:-default}"
+}
 
 # A registered pid counts as a live client if it is alive AND looks like
 # opencode. The mtime grace window covers the gap between registering and
@@ -92,7 +110,7 @@ stop_server() {
   kill "$pid" 2>/dev/null || true
   for _ in $(seq 1 30); do kill -0 "$pid" 2>/dev/null || break; sleep 1; done
   kill -0 "$pid" 2>/dev/null && { log "server did not exit, SIGKILL"; kill -9 "$pid" 2>/dev/null || true; }
-  rm -f "$SERVER_PID_FILE" "$OWNED_FLAG"
+  rm -f "$SERVER_PID_FILE" "$OWNED_FLAG" "$CONFIG_FILE"
   log "server stopped"
 }
 
@@ -102,6 +120,20 @@ start_server() {
     if ! owned_server_pid >/dev/null; then
       log "reusing server on :$PORT that this script does not own"
       say "Reusing existing server on :${PORT} (not managed by this script)."
+      return 0
+    fi
+    # Reusing our own server: settings passed now had no effect on it.
+    local want running
+    want="$(server_config_sig)"
+    running="$(cat "$CONFIG_FILE" 2>/dev/null || echo '')"
+    if [[ -n "$running" && "$want" != "$running" ]]; then
+      say ""
+      say "NOTE: reusing the server already running on :${PORT}; your settings were NOT applied."
+      say "  running : $running"
+      say "  you asked: $want"
+      say "  To apply them: $SELF --stop  &&  <your env> $SELF"
+      say ""
+      log "reuse with differing config; running=[$running] wanted=[$want]"
     fi
     return 0
   fi
@@ -111,6 +143,9 @@ start_server() {
 
   say "Starting Qwen3.8-27B server (PROFILE=$PROFILE) on :${PORT}..."
   log "starting server PROFILE=$PROFILE PORT=$PORT"
+  server_config_sig > "$CONFIG_FILE"
+  # Everything else (CTX, KV_TYPE, VISION, THINKING, ...) is inherited from
+  # this script's environment by setsid.
   PORT="$PORT" PROFILE="$PROFILE" setsid qwen38-27b-server >>"$SERVER_LOG" 2>&1 < /dev/null &
   local pid=$!
   echo "$pid" > "$SERVER_PID_FILE"
@@ -215,6 +250,7 @@ show_status() {
   else
     echo "watcher   : not running"
   fi
+  [[ -f "$CONFIG_FILE" ]] && echo "config    : $(cat "$CONFIG_FILE")"
   echo "clients   : $n"
   echo "state dir : $STATE_DIR"
   echo "log       : $LOG_FILE"

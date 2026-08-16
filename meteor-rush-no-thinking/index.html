@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Meteor Rush 3D</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #000; font-family: 'Courier New', monospace; }
+  canvas { display: block; }
+
+  #hud {
+    position: fixed; top: 0; left: 0; width: 100%; padding: 16px 24px;
+    display: flex; justify-content: space-between; align-items: flex-start;
+    pointer-events: none; z-index: 10; color: #fff;
+  }
+  .hud-box {
+    background: rgba(0, 20, 40, 0.55); border: 1px solid rgba(80, 200, 255, 0.4);
+    padding: 10px 16px; border-radius: 6px; backdrop-filter: blur(4px);
+  }
+  .hud-label { font-size: 11px; letter-spacing: 2px; color: #6ad0ff; text-transform: uppercase; }
+  .hud-value { font-size: 28px; font-weight: bold; color: #fff; text-shadow: 0 0 12px rgba(100, 200, 255, 0.8); }
+  #combo-display { font-size: 16px; color: #ffd76a; min-height: 18px; margin-top: 4px; text-shadow: 0 0 8px rgba(255, 200, 80, 0.9); }
+
+  #crosshair {
+    position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    width: 24px; height: 24px; pointer-events: none; z-index: 10;
+  }
+  #crosshair::before, #crosshair::after {
+    content: ''; position: absolute; background: rgba(120, 230, 255, 0.9);
+    box-shadow: 0 0 6px rgba(120, 230, 255, 0.8);
+  }
+  #crosshair::before { left: 50%; top: 0; width: 2px; height: 100%; transform: translateX(-50%); }
+  #crosshair::after { top: 50%; left: 0; height: 2px; width: 100%; transform: translateY(-50%); }
+
+  #overlay {
+    position: fixed; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; z-index: 20;
+    background: radial-gradient(ellipse at center, rgba(5, 12, 30, 0.85) 0%, rgba(0, 0, 5, 0.95) 100%);
+    color: #fff; text-align: center;
+  }
+  #overlay.hidden { display: none; }
+  #overlay h1 {
+    font-size: 64px; letter-spacing: 8px; margin-bottom: 8px;
+    background: linear-gradient(180deg, #aef3ff 0%, #3fa9ff 55%, #7a5cff 100%);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    filter: drop-shadow(0 0 24px rgba(80, 160, 255, 0.6));
+  }
+  #overlay h2 { font-size: 22px; letter-spacing: 3px; color: #ffd76a; margin-bottom: 28px; text-shadow: 0 0 14px rgba(255, 200, 80, 0.7); }
+  #overlay .final-score { font-size: 40px; color: #fff; margin-bottom: 24px; text-shadow: 0 0 16px rgba(120, 220, 255, 0.9); }
+  #start-btn {
+    pointer-events: auto; cursor: pointer; font-family: inherit;
+    font-size: 20px; letter-spacing: 3px; padding: 14px 44px;
+    color: #aef3ff; background: rgba(20, 60, 100, 0.4);
+    border: 2px solid #3fa9ff; border-radius: 8px;
+    transition: all 0.15s ease; text-transform: uppercase;
+  }
+  #start-btn:hover { background: rgba(60, 140, 220, 0.5); color: #fff; box-shadow: 0 0 24px rgba(80, 160, 255, 0.7); }
+  .controls { margin-top: 32px; font-size: 13px; line-height: 1.9; color: #9fc8e8; letter-spacing: 1px; }
+  .controls b { color: #fff; }
+
+  #damage-flash {
+    position: fixed; inset: 0; pointer-events: none; z-index: 15;
+    background: radial-gradient(ellipse at center, transparent 40%, rgba(255, 30, 30, 0.55) 100%);
+    opacity: 0; transition: opacity 0.08s linear;
+  }
+
+  #shield-bar-wrap {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+    width: 320px; z-index: 10; pointer-events: none;
+  }
+  #shield-label { font-size: 10px; letter-spacing: 2px; color: #6ad0ff; text-align: center; margin-bottom: 4px; }
+  #shield-bar-outer { width: 100%; height: 10px; background: rgba(0, 20, 40, 0.6); border: 1px solid rgba(80, 200, 255, 0.4); border-radius: 5px; overflow: hidden; }
+  #shield-bar-inner { height: 100%; width: 100%; background: linear-gradient(90deg, #3fa9ff, #7df0ff); transition: width 0.12s ease; box-shadow: 0 0 10px rgba(100, 200, 255, 0.8); }
+</style>
+</head>
+<body>
+
+<div id="hud">
+  <div class="hud-box">
+    <div class="hud-label">Score</div>
+    <div class="hud-value" id="score">0</div>
+    <div id="combo-display"></div>
+  </div>
+  <div class="hud-box">
+    <div class="hud-label">Wave</div>
+    <div class="hud-value" id="wave">1</div>
+  </div>
+</div>
+
+<div id="crosshair"></div>
+<div id="damage-flash"></div>
+
+<div id="shield-bar-wrap">
+  <div id="shield-label">HULL INTEGRITY</div>
+  <div id="shield-bar-outer"><div id="shield-bar-inner"></div></div>
+</div>
+
+<div id="overlay">
+  <h1>METEOR RUSH</h1>
+  <h2 id="subtitle">3D DEEP SPACE SHOOTER</h2>
+  <div class="final-score" id="final-score" style="display:none"></div>
+  <button id="start-btn">Launch</button>
+  <div class="controls">
+    <b>WASD / Arrows</b> — steer ship<br>
+    <b>Mouse</b> — aim &nbsp;|&nbsp; <b>Click / Hold</b> — fire lasers<br>
+    <b>Shift</b> — boost (drains hull) &nbsp;|&nbsp; <b>Esc</b> — pause
+  </div>
+</div>
+
+<script src="game.js"></script>
+</body>
+</html>

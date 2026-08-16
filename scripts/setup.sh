@@ -486,8 +486,25 @@ KV CACHE TYPES -- READ THIS BEFORE CHANGING KV_TYPE
 
 ENVIRONMENT OVERRIDES
   PORT=8080          HOST=127.0.0.1     CTX=<tokens>
-  KV_TYPE=q8_0|q5_1|q4_0                VISION=0|1
+  KV_TYPE=q4_0|q8_0|f16                 VISION=0|1
   NP=<slots>         UB=<micro-batch>
+  THINKING=1|0       THINKING_BUDGET=<tokens>
+
+THINKING
+  On by default -- it is the model's own default and what Qwen tuned the
+  agentic and coding gains around. Reasoning is returned separately in
+  reasoning_content, so it does not pollute content.
+
+  THINKING=0 disables it AND swaps to the model card's instruct sampling
+  preset (temp 0.7, top_p 0.80, presence_penalty 1.5). Do not disable
+  thinking without that swap: the card warns the thinking preset causes
+  repetition on the non-thinking path.
+
+  Measured on a simple coding prompt: thinking off is ~2.5x fewer output
+  tokens and 3-5x faster, at the cost of reasoning quality.
+
+  THINKING_BUDGET=N caps thinking at N tokens instead of disabling it --
+  useful for bounding the max_tokens trap below while keeping reasoning.
 
 WHY THESE NUMBERS
   * Only 16 of this model's 65 layers hold a KV cache
@@ -592,6 +609,8 @@ KV_TYPE=\${KV_TYPE:-\$D_KV}
 VISION=\${VISION:-\$D_VISION}
 NP=\${NP:-\$D_NP}
 UB=\${UB:-\$D_UB}
+THINKING=\${THINKING:-1}
+THINKING_BUDGET=\${THINKING_BUDGET:-}
 
 # Only f16/bf16/q8_0/q4_0 have CUDA flash-attention kernels for this model.
 # Everything else silently falls back to CPU attention: measured 48 tok/s
@@ -624,12 +643,33 @@ ARGS=(
   -b 1024
   --host "\$HOST"
   --port "\$PORT"
-  # Thinking-mode sampling preset from the Qwen3.8 model card.
-  --temp 1.0
-  --top-p 0.95
-  --top-k 20
-  --min-p 0.0
 )
+
+# Thinking mode and its sampler are a matched pair. The Qwen3.8 card specifies
+# DIFFERENT sampling for each, and running the thinking preset with thinking
+# disabled is documented to cause repetition -- which is what presence_penalty
+# exists to suppress. So THINKING flips both together, never one alone.
+if [[ "\$THINKING" == "0" ]]; then
+  ARGS+=(
+    --reasoning off
+    # Instruct (non-thinking) preset, Qwen3.8 model card.
+    --temp 0.7
+    --top-p 0.80
+    --top-k 20
+    --min-p 0.0
+    --presence-penalty 1.5
+  )
+else
+  ARGS+=(
+    # Thinking preset, Qwen3.8 model card.
+    --temp 1.0
+    --top-p 0.95
+    --top-k 20
+    --min-p 0.0
+  )
+  # Cap thinking without disabling it: bounds the max_tokens trap below.
+  [[ -n "\$THINKING_BUDGET" ]] && ARGS+=(--reasoning-budget "\$THINKING_BUDGET")
+fi
 
 # Speculative decoding via the multi-token-prediction head. llama.cpp only
 # auto-discovers MTP sidecars on the -hf path, so point at it explicitly.
