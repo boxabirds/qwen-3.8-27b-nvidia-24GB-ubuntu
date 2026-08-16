@@ -390,15 +390,43 @@ create_wrappers() {
   info "Creating run script..."
   local run_script="${BIN_DIR}/qwen38-27b-server"
 
+  # Bake only filenames, never absolute paths -- the launcher resolves
+  # directories from $HOME at runtime. Keeps it portable across machines and
+  # users, and keeps the invoking user's name out of a file people paste into
+  # bug reports.
+  local mmproj_name="" mtp_name=""
+  [[ -n "$MMPROJ"   ]] && mmproj_name="$(basename "$MMPROJ")"
+  [[ -n "$MTP_HEAD" ]] && mtp_name="$(basename "$MTP_HEAD")"
+
   cat > "$run_script" <<EOF
 #!/usr/bin/env bash
 # Auto-generated launcher for Qwen3.8-27B. Regenerate with scripts/setup.sh.
+# Contains no machine-specific paths: everything resolves from \$HOME at run
+# time, so this file can be copied between machines and users unchanged.
 set -euo pipefail
-export PATH="${BIN_DIR}:\$PATH"
 
-MODEL="${MODEL_GGUF}"
-MMPROJ="${MMPROJ}"
-MTP="${MTP_HEAD}"
+# Some minimal service environments start without HOME; fall back to passwd.
+: "\${HOME:=\$(getent passwd "\$(id -u)" | cut -d: -f6)}"
+if [[ -z "\${HOME:-}" ]]; then
+  echo "qwen38-27b-server: cannot determine HOME; set HOME or QWEN38_ROOT." >&2
+  exit 1
+fi
+
+QWEN38_ROOT="\${QWEN38_ROOT:-\$HOME/.local/share/qwen38-27b}"
+MODEL_DIR="\$QWEN38_ROOT/models/Qwen3.8-27B-GGUF"
+BIN_DIR="\$HOME/.local/bin"
+export PATH="\$BIN_DIR:\$PATH"
+
+# Filenames are fixed at install time; directories are not.
+QUANT_FILE_NAME="${QUANT_FILE}"
+MMPROJ_FILE_NAME="${mmproj_name}"
+MTP_FILE_NAME="${mtp_name}"
+
+MODEL="\${MODEL:-\$MODEL_DIR/\$QUANT_FILE_NAME}"
+MMPROJ="\${MMPROJ:-}"
+if [[ -z "\$MMPROJ" && -n "\$MMPROJ_FILE_NAME" ]]; then MMPROJ="\$MODEL_DIR/\$MMPROJ_FILE_NAME"; fi
+MTP="\${MTP:-}"
+if [[ -z "\$MTP" && -n "\$MTP_FILE_NAME" ]]; then MTP="\$MODEL_DIR/\$MTP_FILE_NAME"; fi
 
 show_help() {
 cat <<'HELP'
@@ -495,6 +523,14 @@ HELP
 case "\${1:-}" in
   -h|--help|help) show_help; exit 0 ;;
 esac
+
+if [[ ! -f "\$MODEL" ]]; then
+  echo "qwen38-27b-server: model not found at" >&2
+  echo "  \$MODEL" >&2
+  echo "Set QWEN38_ROOT if your install lives elsewhere, or MODEL for a" >&2
+  echo "specific file, or re-run scripts/setup.sh to (re)download." >&2
+  exit 1
+fi
 
 # ---- Profiles -------------------------------------------------------------
 # All values below are MEASURED on a 24GB RTX 4090, not estimated. Only 16 of
@@ -603,10 +639,12 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=${run_script}
+# %h is systemd's specifier for the invoking user's home directory, so this
+# unit carries no hardcoded username either.
+ExecStart=%h/.local/bin/qwen38-27b-server
 Restart=on-failure
 RestartSec=5
-Environment=PATH=${BIN_DIR}:/usr/local/cuda/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PATH=%h/.local/bin:/usr/local/cuda/bin:/usr/local/bin:/usr/bin:/bin
 
 [Install]
 WantedBy=default.target

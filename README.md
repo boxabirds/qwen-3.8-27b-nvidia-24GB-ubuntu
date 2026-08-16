@@ -179,8 +179,17 @@ qwen38-27b-server --spec-draft-n-max 4             # passthrough to llama-server
 | `KV_TYPE` | per profile | `q8_0` \| `q5_1` \| `q4_0` |
 | `VISION` | per profile | `0` \| `1` |
 | `NP` / `UB` | `1` / `256` | Parallel slots / micro-batch |
+| `MODEL_ALIAS` | `qwen3.8-27b` | Model id advertised at `/v1/models` |
+| `QWEN38_ROOT` | `$HOME/.local/share/qwen38-27b` | Install location |
+| `MODEL` / `MMPROJ` / `MTP` | derived | Explicit `.gguf` paths |
 
 Unrecognised arguments pass straight through to `llama-server`.
+
+The launcher contains **no machine-specific paths** — it resolves everything
+from `$HOME` at runtime (falling back to the passwd entry if `HOME` is unset),
+so the same file works for any user on any machine. The systemd unit uses
+systemd's `%h` specifier for the same reason. If your install lives elsewhere,
+set `QWEN38_ROOT`.
 
 ### Connecting a coding agent
 
