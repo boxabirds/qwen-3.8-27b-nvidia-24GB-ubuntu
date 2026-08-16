@@ -197,6 +197,46 @@ so the same file works for any user on any machine. The systemd unit uses
 systemd's `%h` specifier for the same reason. If your install lives elsewhere,
 set `QWEN38_ROOT`.
 
+### One-command OpenCode session (recommended)
+
+`scripts/run-opencode.sh` starts the server on demand, launches OpenCode
+against it, and shuts the server down once you stop using it — so a 22 GB
+model is not sitting on your GPU all day.
+
+```bash
+scripts/run-opencode.sh              # start server if needed, then OpenCode
+scripts/run-opencode.sh --status     # server, watcher, clients, idle timer
+scripts/run-opencode.sh --stop       # stop now
+scripts/run-opencode.sh --server-only    # server + watcher, no client
+scripts/run-opencode.sh -- run "explain this repo"   # pass args to opencode
+```
+
+How the lifecycle works:
+
+- Starts `llama-server` only if nothing is already serving on `$PORT`.
+- Registers the session as a client, then runs OpenCode in the foreground.
+- A single detached watcher shuts the server down once **no client has been
+  alive for 5 minutes** (`IDLE_TIMEOUT`, seconds).
+- Running the script again registers another client, which **resets the idle
+  countdown** and reuses the running server — so a second terminal is instant,
+  and quitting one session does not kill the other.
+- It only ever stops a server it started. One you launched yourself is left
+  alone.
+
+| Variable | Default | |
+|---|---|---|
+| `IDLE_TIMEOUT` | `300` | Seconds with zero clients before shutdown |
+| `POLL_INTERVAL` | `10` | Watcher poll frequency |
+| `PROFILE` | `coding` | Passed to the server launcher |
+| `PORT` | `8080` | |
+| `PROVIDER` / `MODEL_ID` | `qwen38-local` / `qwen3.8-27b` | Must match your opencode config |
+
+State lives in `~/.local/state/qwen38-27b/` (pids, client registrations, logs).
+Writes `~/.config/opencode/opencode.json` if you do not already have one; an
+existing config is never overwritten.
+
+### Manual control
+
 ### Connecting a coding agent
 
 The server speaks the OpenAI API at `http://127.0.0.1:8080/v1` and advertises a
