@@ -1,0 +1,7 @@
+# Build/run artefacts produced by scripts/setup.sh
+scripts/setup.log
+*.log
+
+# Models and build tree live outside the repo, but guard against stray copies
+*.gguf
+build/
