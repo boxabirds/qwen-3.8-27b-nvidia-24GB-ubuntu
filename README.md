@@ -156,6 +156,12 @@ Select with `PROFILE=<name>`. **All VRAM figures measured on a 24GB RTX 4090.**
 | `vision-max` | 128k | q4_0 | ✓ | 23,534 | **513** ⚠ | 2317 t/s | Foreground only |
 | `max` | 160k | q4_0 | — | 23,298 | **749** ⚠ | 2303 t/s | Foreground only |
 
+`coding` is the default because it has both the most context and the most
+headroom. Needle-in-a-haystack retrieval scores 8/8 at 64k and at a
+nearly-full 128k, matching an unquantised `f16` control — so 4-bit KV shows no
+measurable retrieval penalty ([details](docs/discovery.md)). That is a floor
+test though; if you suspect quality in real use, `balanced` runs `q8_0`.
+
 ⚠ Under ~700 MiB of headroom. These load and serve, but a browser tab or a second
 CUDA process will OOM them mid-run. **Do not point systemd at these.**
 

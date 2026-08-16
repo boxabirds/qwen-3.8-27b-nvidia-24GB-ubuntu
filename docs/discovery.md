@@ -369,6 +369,58 @@ below 24GB.
 
 ---
 
+## 8b. KV quantisation vs long-context retrieval (measured)
+
+Section 2b established that `q4_0` is the fastest KV type that fits at 128k.
+This asked the obvious follow-up: does 4-bit KV *cost* anything on retrieval?
+
+**Method.** One haystack of filler paragraphs with 8 unique 6-digit codes
+planted at depths 4% / 13% / 27% / 41% / 55% / 68% / 82% / 95%. One query per
+needle, scored on exact match. `temperature=0, top_k=1` so the comparison
+measures KV fidelity rather than sampling noise. Identical seeded haystack
+across every configuration. The haystack is a shared prefix, so llama.cpp's
+prompt cache makes queries after the first cost ~2s instead of ~35s.
+
+### At 64k context, 63,116-token haystack
+
+| KV | Score | Exact match | VRAM |
+|---|---|---|---|
+| `f16` (unquantised control) | **8/8** | 8/8 | 23,237 MiB |
+| `q8_0` | **8/8** | 8/8 | 21,695 MiB |
+| `q4_0` | **8/8** | 8/8 | 20,607 MiB |
+
+### At 128k context (the shipped default), 126,760-token haystack
+
+| KV | Score | Exact match | VRAM |
+|---|---|---|---|
+| `q4_0` | **8/8** | 8/8 | 22,407 MiB |
+
+Every reply at every depth was the bare six digits -- no near-misses, no
+transpositions, no refusals. **No measurable retrieval penalty from q4_0**,
+including at nearly-full 128k where the cache is deepest.
+
+### What this does NOT establish
+
+This is a **floor test**. Verbatim recall of a distinctive, high-salience
+string is the easiest long-context task there is, and a model can pass it while
+still degrading on things a coding agent actually does:
+
+- reasoning over information dispersed across many positions
+- code comprehension, where tokens are far less distinctive than a 6-digit code
+- multi-hop retrieval (find A, use A to find B)
+- tasks where the needle is semantically similar to the filler
+
+8/8 across three KV types is consistent with "quantisation is harmless here",
+but it is equally consistent with "this test is too easy to separate them".
+The control matters: `f16` also scored 8/8, so the test never demonstrated it
+*could* detect damage. Read it as **no evidence of harm**, not as proof of
+parity.
+
+`PROFILE=balanced` (96k, `q8_0`) remains the conservative option if you suspect
+retrieval quality in real use.
+
+---
+
 ## 9. Reproducing these measurements
 
 ```bash
