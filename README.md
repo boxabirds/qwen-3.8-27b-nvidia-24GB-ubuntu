@@ -182,6 +182,86 @@ qwen38-27b-server --spec-draft-n-max 4             # passthrough to llama-server
 
 Unrecognised arguments pass straight through to `llama-server`.
 
+### Connecting a coding agent
+
+The server speaks the OpenAI API at `http://127.0.0.1:8080/v1` and advertises a
+stable model id of **`qwen3.8-27b`** (override with `MODEL_ALIAS=`). Any
+OpenAI-compatible client works; two good terminal agents:
+
+#### Pi ([pi.dev](https://pi.dev))
+
+Minimal, MIT-licensed, and it has **built-in llama.cpp support**.
+
+```bash
+npm install -g @earendil-works/pi-coding-agent
+```
+
+Add to `~/.pi/agent/models.json`:
+
+```json
+{
+  "providers": {
+    "qwen38-local": {
+      "baseUrl": "http://127.0.0.1:8080/v1",
+      "api": "openai-completions",
+      "apiKey": "local",
+      "models": [
+        {
+          "id": "qwen3.8-27b",
+          "name": "Qwen3.8-27B (local)",
+          "input": ["text"],
+          "contextWindow": 131072,
+          "maxTokens": 32768,
+          "reasoning": true
+        }
+      ]
+    }
+  }
+}
+```
+
+Then `pi` and pick the model with `/model`. `apiKey` is required but ignored —
+any placeholder works.
+
+#### OpenCode ([opencode.ai](https://opencode.ai))
+
+Create `opencode.json` in your project (or `~/.config/opencode/`):
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "qwen38-local": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Qwen3.8-27B (local)",
+      "options": { "baseURL": "http://127.0.0.1:8080/v1" },
+      "models": {
+        "qwen3.8-27b": {
+          "name": "Qwen3.8-27B (local)",
+          "limit": { "context": 131072, "output": 32768 }
+        }
+      }
+    }
+  }
+}
+```
+
+The model key **must** match what `/v1/models` returns — `qwen3.8-27b`.
+
+#### Anything else
+
+```bash
+export OPENAI_BASE_URL=http://127.0.0.1:8080/v1
+export OPENAI_API_KEY=local          # required by most clients, ignored here
+```
+
+Works with the OpenAI Python/JS SDKs, Aider, Continue, Cline, LangChain, and
+similar. Point them at the base URL and use model `qwen3.8-27b`.
+
+> **Set a generous output limit.** Thinking mode bills reasoning against
+> `max_tokens`; too small a budget returns empty content. See
+> [Thinking mode](#thinking-mode-consumes-max_tokens).
+
 ### Run as a service
 
 ```bash

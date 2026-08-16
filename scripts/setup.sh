@@ -484,6 +484,7 @@ FURTHER READING
 
 EXAMPLES
   qwen38-27b-server                                  # 128k coding default
+  # API: http://127.0.0.1:8080/v1  model id: qwen3.8-27b
   PROFILE=vision qwen38-27b-server                   # images, 32k
   PROFILE=balanced qwen38-27b-server                 # 96k, full q8_0 KV
   CTX=65536 KV_TYPE=q8_0 qwen38-27b-server           # hand-tuned
@@ -550,6 +551,9 @@ UB=\${UB:-\$D_UB}
 
 ARGS=(
   -m "\$MODEL"
+  # Stable model id for API clients. Without this llama-server advertises the
+  # full .gguf path, so every client config breaks when you change quant.
+  -a "\${MODEL_ALIAS:-qwen3.8-27b}"
   -ngl 99
   -c "\$CTX"
   -fa on
