@@ -97,7 +97,7 @@ cache on a 16GB card. The script refuses and prints a quant table. Short version
 
 ```bash
 QUANT=UD-Q3_K_XL ALLOW_LOW_VRAM=1 ./scripts/setup.sh
-CTX=32768 KV_TYPE=q5_1 VISION=0 qwen38-27b-server
+CTX=32768 KV_TYPE=q4_0 VISION=0 qwen38-27b-server
 ```
 
 Those 16GB figures are **extrapolated, not measured** — see
@@ -148,13 +148,13 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 
 Select with `PROFILE=<name>`. **All VRAM figures measured on a 24GB RTX 4090.**
 
-| Profile | Context | KV | Vision | VRAM | Free | Use for |
-|---|---|---|---|---|---|---|
-| **`coding`** *(default)* | 128k | q5_1 | — | 22,464 | 1,583 | Coding agents |
-| `balanced` | 96k | q8_0 | — | 22,920 | 1,127 | Max KV fidelity |
-| `vision` | 96k | q5_1 | ✓ | 22,688 | 1,359 | Images + long context |
-| `vision-max` | 128k | q5_1 | ✓ | 23,600 | **448** ⚠ | Foreground only |
-| `max` | 160k | q5_1 | — | 23,376 | **671** ⚠ | Foreground only |
+| Profile | Context | KV | Vision | VRAM | Free | Prefill | Use for |
+|---|---|---|---|---|---|---|---|
+| **`coding`** *(default)* | 128k | q4_0 | — | 22,398 | 1,649 | 2309 t/s | Coding agents |
+| `balanced` | 96k | q8_0 | — | 23,130 | 917 | 2303 t/s | Max KV fidelity |
+| `vision` | 96k | q4_0 | ✓ | 22,634 | 1,413 | 2309 t/s | Images + long context |
+| `vision-max` | 128k | q4_0 | ✓ | 23,534 | **513** ⚠ | 2317 t/s | Foreground only |
+| `max` | 160k | q4_0 | — | 23,298 | **749** ⚠ | 2303 t/s | Foreground only |
 
 ⚠ Under ~700 MiB of headroom. These load and serve, but a browser tab or a second
 CUDA process will OOM them mid-run. **Do not point systemd at these.**
@@ -176,7 +176,7 @@ qwen38-27b-server --spec-draft-n-max 4             # passthrough to llama-server
 | `PROFILE` | `coding` | Profile name |
 | `PORT` / `HOST` | `8080` / `127.0.0.1` | Bind address |
 | `CTX` | per profile | Context window in tokens |
-| `KV_TYPE` | per profile | `q8_0` \| `q5_1` \| `q4_0` |
+| `KV_TYPE` | per profile | `q4_0` \| `q8_0` \| `f16` — see warning below |
 | `VISION` | per profile | `0` \| `1` |
 | `NP` / `UB` | `1` / `256` | Parallel slots / micro-batch |
 | `MODEL_ALIAS` | `qwen3.8-27b` | Model id advertised at `/v1/models` |
@@ -271,6 +271,14 @@ similar. Point them at the base URL and use model `qwen3.8-27b`.
 > `max_tokens`; too small a budget returns empty content. See
 > [Thinking mode](#thinking-mode-consumes-max_tokens).
 
+> **Do not set `KV_TYPE` to `q5_1`, `q5_0`, `q4_1` or `iq4_nl`.** Those have no
+> CUDA flash-attention kernel for this model and silently fall back to **CPU
+> attention** — measured 48 tok/s prefill versus 2300, with the GPU at 1% and
+> eight CPU cores pegged. An agent sending an 8k system prompt waits four
+> minutes instead of four seconds. Only `q4_0`, `q8_0`, `f16` and `bf16` run on
+> the GPU. The launcher warns you. Details in
+> [docs/discovery.md §2b](docs/discovery.md).
+
 ### Run as a service
 
 ```bash
@@ -362,7 +370,7 @@ the log; absent means speculative decoding is off.
 then re-run `setup.sh`. Models are cached separately and will not re-download.
 
 **Want more context than 160k?** Not possible at this quant on 24GB. Use a
-smaller one (`QUANT=UD-Q3_K_XL`); each GiB freed buys ~43k tokens at q5_1.
+smaller one (`QUANT=UD-Q3_K_XL`); each GiB freed buys ~57k tokens at q4_0.
 
 ---
 

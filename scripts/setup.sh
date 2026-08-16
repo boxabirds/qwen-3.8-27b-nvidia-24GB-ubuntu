@@ -441,41 +441,48 @@ USAGE
   override anything the profile set.
 
 PROFILES                                          (default: coding)
-  Every VRAM figure below was MEASURED on this machine (RTX 4090 24GB,
-  24047 MiB usable), not estimated. "free" is what was left over.
+  Every VRAM and prefill figure below was MEASURED on this machine (RTX 4090
+  24GB, 24047 MiB usable), not estimated. "free" is what was left over.
 
-  coding     128k ctx   q5_1 KV   vision off    22464 MiB   1583 free
+  coding     128k ctx   q4_0 KV   vision off   22398 MiB  1649 free  2309 tok/s
       >> DEFAULT. Smoke-tested end-to-end: loads, serves, MTP active.
       The right choice for coding agents -- 128k holds a real repo context.
-      CAVEAT: KV is q5_1, not q8_0. Expect slight long-context recall loss
-              on needle-in-haystack style retrieval. Full q8_0 KV at 128k
-              does NOT fit -- measured OOM, this is not a preference.
+      CAVEAT: KV is q4_0. q8_0 has higher fidelity but does not fit at 128k.
 
-  balanced    96k ctx   q8_0 KV   vision off    22920 MiB   1127 free
-      Full-fidelity KV cache. Use when retrieval accuracy over a long
-      context matters more than the last 32k of length.
-      CAVEAT: 96k can be tight for whole-repo agent runs.
+  balanced    96k ctx   q8_0 KV   vision off   23130 MiB   917 free  2303 tok/s
+      Highest-fidelity KV cache that still runs on the GPU. Use when
+      long-context retrieval accuracy matters more than the last 32k.
+      CAVEAT: only 917 MiB spare.
 
-  vision      96k ctx   q5_1 KV   vision ON     22688 MiB   1359 free
-      The only profile that can read images/video. Adds --image-min-tokens
-      1024, which llama.cpp recommends for Qwen-VL grounding accuracy.
-      Vision is cheaper than it looks: the projector is ~0.87 GiB, so it
-      costs about 32k of context versus 'coding', not the whole budget.
-      CAVEAT: 96k rather than 128k. For 128k with vision see 'vision-max'.
+  vision      96k ctx   q4_0 KV   vision ON    22634 MiB  1413 free  2309 tok/s
+      The only profiles that read images/video. Adds --image-min-tokens 1024,
+      which llama.cpp recommends for Qwen-VL grounding accuracy.
+      Vision costs ~0.87 GiB of weights, about 32k of context.
+      CAVEAT: every image costs >=1024 context tokens regardless of size.
 
-  vision-max 128k ctx   q5_1 KV   vision ON     23600 MiB    447 free
+  vision-max 128k ctx   q4_0 KV   vision ON    23534 MiB   513 free  2317 tok/s
       Full 128k context AND images. Verified to load and serve.
-      CAVEAT: ONLY 447 MiB SPARE -- the tightest profile here. Anything else
-              touching the GPU (a browser tab, a second CUDA process, even a
-              desktop compositor restart) will OOM it mid-run. Use it for
-              deliberate foreground work on an otherwise idle GPU. Do NOT
-              point systemd at this one; use 'vision' or 'coding' instead.
+      CAVEAT: ONLY 513 MiB SPARE -- the tightest profile here. Anything else
+              touching the GPU will OOM it mid-run. Foreground use only; do
+              NOT point systemd at this one.
 
-  max        160k ctx   q5_1 KV   vision off    23376 MiB    671 free
-      Verified to load. The hard ceiling for this quant.
-      CAVEAT: ONLY 671 MiB SPARE. A browser or a second CUDA process will
-              push this into OOM. Not recommended for unattended/systemd
-              use -- prefer 'coding'. 192k q5_1 and 256k q4_0 both OOM.
+  max        160k ctx   q4_0 KV   vision off   23298 MiB   749 free  2303 tok/s
+      The hard ceiling for this quant. 192k q4_0 OOMs.
+      CAVEAT: 749 MiB spare. Foreground use only.
+
+KV CACHE TYPES -- READ THIS BEFORE CHANGING KV_TYPE
+  Only f16, bf16, q8_0 and q4_0 have CUDA flash-attention kernels for this
+  model. Everything else (q4_1, q5_0, q5_1, iq4_nl) silently falls back to
+  CPU attention. llama.cpp prints no warning; you just get, measured here:
+
+      q4_0 / q8_0 / f16 / bf16   ~2300-2675 tok/s prefill   GPU busy
+      q4_1                             79 tok/s
+      iq4_nl                           59 tok/s
+      q5_0                             51 tok/s
+      q5_1                             48 tok/s   GPU at 1%, 8 CPU cores pegged
+
+  That is up to 55x slower, and it hurts prompt processing most -- exactly
+  what a coding agent does most of. The launcher warns if you pick one.
 
 ENVIRONMENT OVERRIDES
   PORT=8080          HOST=127.0.0.1     CTX=<tokens>
@@ -552,11 +559,11 @@ PROFILE=\${PROFILE:-coding}
 # D_NEED = measured server-only footprint (total measured VRAM minus the
 # ~595 MiB the desktop held during measurement), used for the pre-flight below.
 case "\$PROFILE" in
-  coding)   D_CTX=131072; D_KV=q5_1; D_VISION=0; D_NP=1; D_UB=256; D_NEED=21900 ;;
-  balanced) D_CTX=98304;  D_KV=q8_0; D_VISION=0; D_NP=1; D_UB=256; D_NEED=22350 ;;
-  vision)   D_CTX=98304;  D_KV=q5_1; D_VISION=1; D_NP=1; D_UB=256; D_NEED=22100 ;;
-  vision-max) D_CTX=131072; D_KV=q5_1; D_VISION=1; D_NP=1; D_UB=256; D_NEED=23010 ;;
-  max)      D_CTX=163840; D_KV=q5_1; D_VISION=0; D_NP=1; D_UB=256; D_NEED=22800 ;;
+  coding)   D_CTX=131072; D_KV=q4_0; D_VISION=0; D_NP=1; D_UB=256; D_NEED=21905 ;;
+  balanced) D_CTX=98304;  D_KV=q8_0; D_VISION=0; D_NP=1; D_UB=256; D_NEED=22635 ;;
+  vision)   D_CTX=98304;  D_KV=q4_0; D_VISION=1; D_NP=1; D_UB=256; D_NEED=22140 ;;
+  vision-max) D_CTX=131072; D_KV=q4_0; D_VISION=1; D_NP=1; D_UB=256; D_NEED=23040 ;;
+  max)      D_CTX=163840; D_KV=q4_0; D_VISION=0; D_NP=1; D_UB=256; D_NEED=22805 ;;
   *) echo "unknown PROFILE '\$PROFILE' (coding|balanced|vision|vision-max|max)" >&2
      echo "run 'qwen38-27b-server --help' for the profile table" >&2; exit 1 ;;
 esac
@@ -585,6 +592,21 @@ KV_TYPE=\${KV_TYPE:-\$D_KV}
 VISION=\${VISION:-\$D_VISION}
 NP=\${NP:-\$D_NP}
 UB=\${UB:-\$D_UB}
+
+# Only f16/bf16/q8_0/q4_0 have CUDA flash-attention kernels for this model.
+# Everything else silently falls back to CPU attention: measured 48 tok/s
+# prefill vs 2300 tok/s, with the GPU at 1% and 8 CPU cores pegged. There is
+# no warning from llama.cpp, so warn here.
+case "\$KV_TYPE" in
+  f16|bf16|q8_0|q4_0) ;;
+  *)
+    echo "WARNING: KV_TYPE='\$KV_TYPE' has no CUDA flash-attention kernel." >&2
+    echo "         Attention will fall back to CPU -- expect ~50x slower prompt" >&2
+    echo "         processing. Use q4_0 (small, fast), q8_0 (fast, higher" >&2
+    echo "         fidelity) or f16. Continuing anyway in 5s (Ctrl-C to abort)." >&2
+    sleep 5
+    ;;
+esac
 
 ARGS=(
   -m "\$MODEL"
@@ -617,6 +639,9 @@ if [[ -n "\$MTP" && -f "\$MTP" ]]; then
     --spec-type draft-mtp
     --spec-draft-n-max 2
     --spec-draft-ngl 99
+    # The draft model has its own KV cache; keep it on a GPU-supported type too.
+    --spec-draft-type-k "\$KV_TYPE"
+    --spec-draft-type-v "\$KV_TYPE"
   )
 fi
 
@@ -808,6 +833,7 @@ print_summary() {
   say "${B}IF SOMETHING LOOKS WRONG${NC}"
   say "  Empty replies       raise max_tokens -- thinking mode consumes it"
   say "  Slow generation     check the log for 'draft acceptance'"
+  say "  Slow prompt reading KV_TYPE must be q4_0/q8_0/f16 -- others run on CPU"
   say "  CUDA out of memory  free the GPU, or use PROFILE=balanced"
   say "  Setup log           ${LOG_FILE}"
   say ""

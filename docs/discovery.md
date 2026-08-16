@@ -57,8 +57,8 @@ mmproj    891 MiB
         19,585 MiB of weights before a single token of context
 ```
 
-**The correct mental model: every MiB freed from weights buys context.** At q5_1,
-1 GiB of weights ≈ 43k tokens. Optimising KV quantisation is a second-order lever;
+**The correct mental model: every MiB freed from weights buys context.** At q4_0,
+1 GiB of weights ≈ 57k tokens. Optimising KV quantisation is a second-order lever;
 optimising *what you load* is first-order.
 
 ---
@@ -96,6 +96,77 @@ Halving the micro-batch took 96k from OOM to loading with 1.1 GiB spare:
 
 **7.3% prefill penalty, ~0% generation penalty.** Cheap for ~700 MiB. Every
 profile above 64k depends on this.
+
+---
+
+## 2b. Quantised KV cache can silently fall back to CPU (55x slower)
+
+**The most expensive bug in this project, and it hid behind a good benchmark.**
+
+Only `f16`, `bf16`, `q8_0` and `q4_0` have CUDA flash-attention kernels for this
+model. Every other KV cache type falls back to **CPU attention**. llama.cpp emits
+no warning at any log level -- the server starts normally and simply runs ~50x
+slower.
+
+### Measured (`llama-bench`, pp4096, `-ub 256`, `-fa 1`)
+
+| KV type | prefill tok/s | |
+|---|---|---|
+| `q4_0` | **2675** | GPU |
+| `f16` | **2664** | GPU |
+| `bf16` | **2647** | GPU |
+| `q8_0` | **2639** | GPU |
+| `q4_1` | 79 | CPU fallback |
+| `iq4_nl` | 59 | CPU fallback |
+| `q5_0` | 51 | CPU fallback |
+| `q5_1` | **48** | CPU fallback |
+
+### Confirming it is CPU, not a GPU slow path
+
+Sampled during a `q5_1` prefill:
+
+```
+GPU utilization   1-2 %          (vs busy on q8_0)
+GPU power         77 W           (idle; 450 W cap)
+CPU               800 %          8 cores pegged, process in R state
+```
+
+### How it surfaces in practice
+
+Not as an error. As an agent that appears to hang. Real server log, OpenCode
+sending an ~8k-token system prompt with `q5_1` KV:
+
+```
+n_tokens = 1024, t =   5.45 s / 187.81 tokens per second
+n_tokens = 2048, t =  20.72 s /  98.85 tokens per second
+n_tokens = 4096, t =  82.00 s /  49.95 tokens per second
+n_tokens = 7168, t = 249.69 s /  28.71 tokens per second
+```
+
+Each 1024-token chunk costs ~10 s more than the last -- O(n^2), because CPU
+attention is quadratic without the tiled FA kernel. Four minutes to read a
+system prompt.
+
+### How it got missed
+
+`llama-bench` defaults to **f16** KV. The 2701 tok/s figure in section 2 was
+measured on the default cache type, so it never touched the quantised path.
+`-ub 256` was benchmarked carefully; the KV type was then changed to `q5_1`
+for memory reasons and **never re-benchmarked**, because it was assumed to be a
+pure memory/quality tradeoff.
+
+This is the identical mistake to section 5, made a second time: **a measurement
+taken before a change was treated as still valid after it.**
+
+### The fix
+
+`q4_0` is strictly better than `q5_1` here -- faster *and* smaller
+(18 vs 24 KiB/token). All profiles now use `q4_0` or `q8_0`, the launcher warns
+on CPU-fallback types, and `--spec-draft-type-k/v` is set to match so the MTP
+head's own KV cache cannot hit the same path.
+
+**When benchmarking, always pass `-ctk`/`-ctv` explicitly.** A `llama-bench`
+run that omits them is not measuring your server's configuration.
 
 ---
 
@@ -172,20 +243,21 @@ stated.
 | 96k | q8_0 | off | 4 / 512 | — | — | **OOM** |
 | 96k | q8_0 | off | 1 / 256 | 22,920 | 1,127 | OK |
 | 128k | q8_0 | off | 1 / 256 | — | — | **OOM** |
-| 128k | q5_1 | off | 1 / 256 | 22,464 | 1,583 | OK |
-| 128k | q4_0 | off | 1 / 256 | 22,248 | 1,799 | OK |
+| 128k | q5_1 | off | 1 / 256 | 22,464 | 1,583 | Loads, but **CPU attention** -- see 2b |
+| 128k | q4_0 | off | 1 / 256 | 22,398 | 1,649 | OK, 2309 tok/s prefill |
 | 128k | q8_0 | off, **no MTP** | 1 / 256 | 22,196 | 1,851 | OK |
-| 160k | q5_1 | off | 1 / 256 | 23,376 | 671 | OK, very tight |
-| 192k | q5_1 | off | 1 / 256 | — | — | **OOM** |
+| 160k | q5_1 | off | 1 / 256 | 23,376 | 671 | Loads, but **CPU attention** -- see 2b |
 | 256k | q4_0 | off | 1 / 256 | — | — | **OOM** |
 | 64k | q8_0 | **on** | 1 / 256 | 22,680 | 1,367 | OK |
-| 96k | q5_1 | **on** | 1 / 256 | 22,688 | 1,359 | OK |
-| 128k | q5_1 | **on** | 1 / 256 | 23,600 | 447 | OK, too tight to rely on |
+| 96k | q4_0 | **on** | 1 / 256 | 22,634 | 1,413 | OK, 2309 tok/s prefill |
+| 128k | q4_0 | **on** | 1 / 256 | 23,534 | 513 | OK, very tight |
+| 160k | q4_0 | off | 1 / 256 | 23,298 | 749 | OK, very tight |
+| 192k | q4_0 | off | 1 / 256 | -- | -- | **OOM** |
 
 ### Hard limits
 
-- **160k is the ceiling** at `UD-Q4_K_XL`. 192k q5_1 and 256k q4_0 both OOM.
-- **q8_0 KV does not fit at 128k.** q5_1 there is a constraint, not a preference.
+- **160k is the ceiling** at `UD-Q4_K_XL`. 192k OOMs even at q4_0.
+- **q8_0 KV does not fit at 128k.** Use q4_0 -- NOT q5_1, which falls back to CPU (2b).
 - Model natively supports 262,144 context — unreachable on 24GB at this quant.
 
 ---
@@ -206,7 +278,7 @@ It is not. Re-measured with `-ub 256`:
 | Before (stale) | 32k | 22,786 | 1,261 |
 | **After** | **96k** | 22,688 | 1,359 |
 
-`mmproj` is 891 MiB ≈ 37k tokens at q5_1. The real cost of vision is **32k of
+`mmproj` is 891 MiB ≈ 49k tokens at q4_0. The real cost of vision is **32k of
 context** (128k → 96k), not the 4x penalty originally implied. Most of that
 apparent gap was `-ub 512` vs `-ub 256`, which has nothing to do with vision.
 
@@ -276,20 +348,23 @@ was available. Treat as a starting point, not a result.
 `UD-Q4_K_XL` (17,092 MiB) cannot fit on 16GB with any context. A smaller quant is
 mandatory. Assume ~15,400 MiB usable after display.
 
-| Quant | Weights | MTP | Est. context @ q5_1 |
+| Quant | Weights | MTP | Est. context @ q4_0 |
 |---|---|---|---|
-| `UD-Q3_K_XL` | 12,817 MiB | on | ~32k |
-| `UD-Q3_K_XL` | 12,817 MiB | **off** | ~96k |
-| `UD-IQ3_XXS` | 11,358 MiB | on | ~64k |
-| `UD-Q2_K_XL` | 9,948 MiB | on | ~128k |
+| `UD-Q3_K_XL` | 12,817 MiB | on | ~48k |
+| `UD-Q3_K_XL` | 12,817 MiB | **off** | ~128k |
+| `UD-IQ3_XXS` | 11,358 MiB | on | ~128k |
+| `UD-Q2_K_XL` | 9,948 MiB | on | ~192k |
+
+Use `q4_0` KV, not `q5_1` -- see 2b. q4_0 is both faster (GPU vs CPU) and
+smaller (18 vs 24 KiB/token), so these are better than the earlier estimates.
 
 ```bash
 QUANT=UD-Q3_K_XL ALLOW_LOW_VRAM=1 ./scripts/setup.sh
-CTX=32768 KV_TYPE=q5_1 VISION=0 qwen38-27b-server
+CTX=32768 KV_TYPE=q4_0 VISION=0 qwen38-27b-server
 ```
 
 On 16GB, **dropping MTP is usually the right trade** — 1,602 MiB buys ~64k tokens
-at q5_1, which generally beats a ~2x generation speedup. Keep vision **off**
+at q4_0, which generally beats a ~2x generation speedup. Keep vision **off**
 below 24GB.
 
 ---
@@ -329,10 +404,10 @@ Not investigated; noted so nobody assumes they were.
 - **`--spec-draft-n-max` is untuned.** Left at 2. Acceptance ranged 0.70–0.92,
   suggesting the draft is rarely wrong and could go deeper. 2 vs 4 vs 6 was never
   benchmarked.
-- **q5_1 KV quality is unmeasured.** It fits and q8_0 does not; the cost to
+- **q4_0 KV quality is unmeasured.** It fits and q8_0 does not; the cost to
   long-context retrieval — exactly where a coding agent lives — is unknown.
   `PROFILE=balanced` (96k, q8_0) is the conservative fallback.
 - **Smaller quants unbenchmarked for quality.** `UD-Q3_K_XL` would free 4,275 MiB
-  (~180k tokens at q5_1) but no quality comparison against `UD-Q4_K_XL` was run.
+  (~240k tokens at q4_0) but no quality comparison against `UD-Q4_K_XL` was run.
 - **Prefill at large context unmeasured.** `llama-bench` was run at pp2048. The
   `-ub 256` penalty may differ at 100k+ prompts.
