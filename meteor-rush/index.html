@@ -56,6 +56,51 @@
   .help{ margin-top:34px; color:#6f82b8; font-size:13px; line-height:2.1; letter-spacing:.08em; }
   .help b{ color:#bfe9ff; letter-spacing:.14em; }
 
+  /* Credits: what actually generated this game. */
+  .credits{
+    margin-top:30px;
+    max-width:min(760px, 92vw);
+    width:100%;
+    overflow-x:auto;
+  }
+  .credits .cap{
+    color:#6f82b8; font-size:11px; letter-spacing:.26em;
+    margin-bottom:10px; text-transform:uppercase;
+  }
+  .credits table{
+    border-collapse:collapse;
+    width:100%;
+    font-size:11.5px;
+    color:#8fa3d8;
+    text-align:left;
+    border:1px solid rgba(62,240,255,.22);
+  }
+  .credits th{
+    color:#3ef0ff;
+    font-weight:700;
+    letter-spacing:.16em;
+    font-size:10px;
+    text-transform:uppercase;
+    background:rgba(62,240,255,.07);
+  }
+  .credits th, .credits td{
+    padding:7px 10px;
+    border:1px solid rgba(62,240,255,.14);
+    vertical-align:top;
+    white-space:nowrap;
+  }
+  .credits td.why{ white-space:normal; color:#6f82b8; }
+  .credits td.file{ color:#bfe9ff; }
+  .credits td.size{ color:#cfd8ff; text-align:right; }
+  .credits td.src{ color:#ff5470; }
+  .credits .foot{
+    color:#5a6b9c; font-size:10.5px; letter-spacing:.1em;
+    margin-top:9px; line-height:1.8;
+  }
+  @media (max-width:640px){
+    .credits{ display:none; }   /* keep the menu usable on phones */
+  }
+
   #hud{
     position:fixed; top:0; left:0; right:0; z-index:5;
     display:flex; justify-content:space-between; align-items:flex-start;
@@ -112,6 +157,38 @@
     <b>SHOOT</b> &mdash; SPACE (HOLD)<br>
     <b>PAUSE</b> &mdash; P &nbsp;&middot;&nbsp; <b>SOUND</b> &mdash; M<br>
     Dodge the rocks. Break the big ones. Don&rsquo;t get hit.
+  </div>
+
+  <div class="credits">
+    <div class="cap">Written by Qwen3.8-27B, running locally</div>
+    <table>
+      <thead>
+        <tr><th>File</th><th>Size</th><th>Source</th><th>Why</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="file">Qwen3.8-27B-UD-Q4_K_XL.gguf</td>
+          <td class="size">16.7 GiB</td>
+          <td class="src">unsloth/</td>
+          <td class="why">Unsloth Dynamic v3.0 &mdash; better quality-per-bit than a plain Q4</td>
+        </tr>
+        <tr>
+          <td class="file">mtp-Qwen3.8-27B-Q4_0.gguf</td>
+          <td class="size">1.6 GiB</td>
+          <td class="src">ggml-org/</td>
+          <td class="why">Speculative decoding head</td>
+        </tr>
+        <tr>
+          <td class="file">mmproj-F16.gguf</td>
+          <td class="size">0.9 GiB</td>
+          <td class="src">unsloth/</td>
+          <td class="why">Vision: CLIP ViT-27, projects 1152-&gt;5120 into the LLM&rsquo;s token space</td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="foot">
+      llama.cpp + CUDA on one RTX 4090 (24GB) &middot; 128k context &middot; no cloud, no API key
+    </div>
   </div>
 </div>
 
