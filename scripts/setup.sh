@@ -355,6 +355,7 @@ ensure_llama_cpp() {
 
 # ====================== Model download ======================
 MODEL_GGUF=""; MMPROJ=""; MTP_HEAD=""
+SMOKE_CTX=""; SMOKE_VRAM=""; SMOKE_FREE=""; SMOKE_GEN=""; SMOKE_ACC=""
 ensure_model() {
   info "Ensuring Qwen3.8-27B GGUF assets..."
 
@@ -681,6 +682,7 @@ smoke_test() {
     free=$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits | head -1)
     ctx=$(curl -s "http://127.0.0.1:${port}/props" \
           | python3 -c 'import sys,json;print(json.load(sys.stdin)["default_generation_settings"]["n_ctx"])' 2>/dev/null || echo "?")
+    SMOKE_CTX="$ctx"; SMOKE_VRAM="$used"; SMOKE_FREE="$free"
     info "Profile '${PROFILE:-coding}': n_ctx=${ctx}, VRAM ${used} MiB used / ${free} MiB free"
     (( free < 500 )) && warn "Only ${free} MiB VRAM headroom -- consider PROFILE=balanced."
 
@@ -691,6 +693,7 @@ smoke_test() {
       -d '{"messages":[{"role":"user","content":"Reply with exactly: OK"}],"max_tokens":256}' \
       | python3 -c 'import sys,json;print(json.load(sys.stdin)["choices"][0]["message"]["content"].strip())' 2>/dev/null || echo "")
     if [[ -n "$reply" ]]; then
+      SMOKE_GEN="ok"
       ok "Generation OK (model replied: '${reply:0:40}')"
     else
       warn "Server is up but generation failed."
@@ -710,6 +713,7 @@ smoke_test() {
     local acc
     acc=$(grep -oE 'draft acceptance = [0-9.]+' "${INSTALL_ROOT}/smoke.log" | tail -1 | grep -oE '[0-9.]+$')
     if [[ -n "$acc" ]]; then
+      SMOKE_ACC="$acc"
       ok "MTP speculative decoding active (draft acceptance ${acc})."
     else
       warn "MTP head was loaded but no draft acceptance was reported -- speculative decoding may be inactive."
@@ -732,25 +736,94 @@ main() {
     smoke_test || warn "Smoke test did not pass; see ${INSTALL_ROOT}/smoke.log"
   fi
 
-  echo
-  ok "=== Setup complete ==="
-  info "Model     : $MODEL_GGUF"
-  info "MTP head  : ${MTP_HEAD:-<none>}"
-  info "Launcher  : ${BIN_DIR}/qwen38-27b-server"
-  info "Start     : qwen38-27b-server                  # coding profile, 128k ctx"
-  info "Profiles  : PROFILE=coding|balanced|vision|vision-max|max qwen38-27b-server"
-  info "Overrides : PORT= HOST= CTX= KV_TYPE= VISION=1 NP= UB="
-  info "Systemd   : systemctl --user enable --now ${SERVICE_NAME}"
-  info "Test      : curl http://127.0.0.1:8080/v1/models"
-  info "Log       : $LOG_FILE"
-  if ((${#APT_MISSING[@]})); then
-    echo
-    warn "Skipped apt packages (no passwordless sudo): ${APT_MISSING[*]}"
-    warn "Install them and re-run to get a CURL-enabled build:"
-    warn "  sudo apt-get install -y --no-install-recommends ${APT_MISSING[*]}"
+  print_summary
+}
+
+# ====================== Final summary ======================
+# Printed directly rather than through log(), so it is not buried under
+# timestamps and level tags. Still tee'd to the log file, colours stripped.
+say() { echo -e "$*"; echo -e "$*" | sed 's/\x1b\[[0-9;]*m//g' >> "$LOG_FILE"; }
+
+human_size() { [[ -f "$1" ]] && du -h "$1" 2>/dev/null | cut -f1 || echo "-"; }
+
+print_summary() {
+  local B B_OFF; B=$'\033[1m'; B_OFF=$'\033[0m'
+  [[ -t 1 ]] || { B=""; B_OFF=""; }
+  local tick="${GREEN}OK${NC}" cross="${YELLOW}--${NC}"
+  local llama_sha; llama_sha=$(git -C "$LLAMA_DIR" rev-parse --short HEAD 2>/dev/null || echo "?")
+
+  say ""
+  say "${GREEN}==============================================================${NC}"
+  say "${GREEN}  Qwen3.8-27B is installed and ready${NC}"
+  say "${GREEN}==============================================================${NC}"
+  say ""
+  say "${B}WHAT WAS INSTALLED${NC}"
+  say "  Model       $(basename "$MODEL_GGUF")  ($(human_size "$MODEL_GGUF"))"
+  if [[ -n "$MTP_HEAD" ]]; then
+    say "  MTP head    $(basename "$MTP_HEAD")  ($(human_size "$MTP_HEAD"))  -> ~2x faster generation"
+  else
+    say "  MTP head    ${YELLOW}not installed${NC} -- no speculative decoding"
   fi
-  echo
-  info "Re-running this script is safe -- it only upgrades what is outdated."
+  if [[ -n "$MMPROJ" ]]; then
+    say "  Vision      $(basename "$MMPROJ")  ($(human_size "$MMPROJ"))  -> PROFILE=vision"
+  else
+    say "  Vision      ${YELLOW}not installed${NC} -- text only"
+  fi
+  say "  llama.cpp   ${llama_sha}  (CUDA sm_${CUDA_ARCHS})"
+  say "  Files in    ${INSTALL_ROOT}"
+  say "  Commands    ${BIN_DIR}/qwen38-27b-server, llama-server"
+  say ""
+
+  if [[ -n "$SMOKE_CTX" || -n "$SMOKE_GEN" ]]; then
+    say "${B}VERIFIED ON THIS MACHINE${NC}"
+    [[ -n "$SMOKE_CTX"  ]] && say "  [${tick}] loads at ${SMOKE_CTX} context, using ${SMOKE_VRAM} MiB (${SMOKE_FREE} MiB free)"
+    [[ "$SMOKE_GEN" == "ok" ]] && say "  [${tick}] generates text over the API"
+    if [[ -n "$SMOKE_ACC" ]]; then
+      say "  [${tick}] speculative decoding live (draft acceptance ${SMOKE_ACC})"
+    elif [[ -n "$MTP_HEAD" ]]; then
+      say "  [${cross}] speculative decoding NOT confirmed -- check ${INSTALL_ROOT}/smoke.log"
+    fi
+    say ""
+  fi
+
+  say "${B}START IT${NC}"
+  say "  ${GREEN}qwen38-27b-server${NC}                        # 128k context, ~92 tok/s"
+  say "  qwen38-27b-server --help                 # all profiles, with caveats"
+  say "  systemctl --user enable --now ${SERVICE_NAME}   # run it as a service"
+  say ""
+  say "${B}CONNECT A CLIENT${NC}  (OpenAI-compatible)"
+  say "  Endpoint    http://127.0.0.1:8080/v1"
+  say "  Model id    qwen3.8-27b"
+  say "  API key     any value -- it is ignored"
+  say "  Check it    curl http://127.0.0.1:8080/v1/models"
+  say "  Pi / OpenCode config examples are in README.md"
+  say ""
+  say "${B}CHOOSE A PROFILE${NC}  PROFILE=<name> qwen38-27b-server"
+  say "  coding       128k  text        default, best for coding agents"
+  say "  balanced      96k  text        full-fidelity q8_0 KV cache"
+  say "  vision        96k  + images    screenshots, diagrams, video"
+  say "  vision-max   128k  + images    tight on VRAM, foreground only"
+  say "  max          160k  text        tight on VRAM, foreground only"
+  say ""
+  say "${B}IF SOMETHING LOOKS WRONG${NC}"
+  say "  Empty replies       raise max_tokens -- thinking mode consumes it"
+  say "  Slow generation     check the log for 'draft acceptance'"
+  say "  CUDA out of memory  free the GPU, or use PROFILE=balanced"
+  say "  Setup log           ${LOG_FILE}"
+  say ""
+  say "${B}LEARN MORE${NC}"
+  say "  README.md            usage and client setup"
+  say "  docs/discovery.md    measurements, and why these settings"
+
+  if ((${#APT_MISSING[@]})); then
+    say ""
+    say "${YELLOW}NOTE: skipped apt packages (no passwordless sudo):${NC} ${APT_MISSING[*]}"
+    say "  sudo apt-get install -y --no-install-recommends ${APT_MISSING[*]}"
+    say "  then re-run this script for a CURL-enabled build."
+  fi
+  say ""
+  say "Re-running this script is safe: it only upgrades what is outdated."
+  say ""
 }
 
 main "$@"
